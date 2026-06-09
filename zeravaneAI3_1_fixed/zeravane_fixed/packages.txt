@@ -1,3 +1,0 @@
-# System packages for Streamlit Cloud (apt-get)
-# chromadb's ONNX runtime needs libgomp
-libgomp1
