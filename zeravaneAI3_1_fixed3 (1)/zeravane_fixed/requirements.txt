@@ -1,0 +1,43 @@
+# ZeravaneAI v3.1 — Dependencies
+# Tested on Python 3.14 (Streamlit Cloud)
+
+# ── Core ──────────────────────────────────────────────────────────────────
+streamlit>=1.35.0
+python-dotenv>=1.0.0
+
+# ── Protobuf — MUST be pinned ≥5.29.0 ─────────────────────────────────────
+# protobuf 4.x ships a C extension (google._upb._message) compiled for
+# Python ≤3.13. On Python 3.14 it raises:
+#   TypeError: Metaclasses with custom tp_new are not supported
+# Streamlit itself imports protobuf at startup, so this crash happens before
+# our app code even runs. protobuf 5.29+ ships 3.14-compatible wheels.
+protobuf>=5.29.0
+
+# ── LLM — Gemini ──────────────────────────────────────────────────────────
+google-genai>=0.3.0
+
+# ── Backend API ───────────────────────────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+
+# ── HTTP & Scraping ───────────────────────────────────────────────────────
+requests>=2.32.0
+beautifulsoup4>=4.12.0
+urllib3>=2.0.0
+
+# ── Vector Database ───────────────────────────────────────────────────────
+# Pinned <0.7.0 — chromadb ≥0.7 pulls opentelemetry-exporter-otlp-proto-grpc
+# which still has its own protobuf 4.x dependency that conflicts.
+chromadb>=0.5.0,<0.7.0
+
+# ── Data / Utils ──────────────────────────────────────────────────────────
+pydantic>=2.0.0
+
+# ── Crawl4AI (Tier-1 free scraper) ────────────────────────────────────────
+# NOT listed here — install separately on local/Docker only:
+#   pip install crawl4ai && crawl4ai-setup
+#
+# Reason: crawl4ai requires lxml which needs libxml2/libxslt system libs.
+# Streamlit Cloud (Python 3.14) has no pre-built lxml wheel and no system
+# libs. The engine handles absence gracefully — falls through to Tier 2/3.
