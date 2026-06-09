@@ -1,37 +1,43 @@
 """
-ZeravaneAI v3.1 — Streamlit entry point (production-safe)
+ZeravaneAI v3.1 — Streamlit entry point (production-ready)
 Run: streamlit run streamlit_app.py
 
-This entry point handles multiple directory structures:
-  1. Nested (development): zeravaneAI3_1_fixed3 (1)/zeravane_fixed/zeravaneai/
-  2. Flat (production/Streamlit Cloud): ./zeravaneai/
+⚠️ CRITICAL: This MUST be the entry point for Streamlit Cloud.
+Set "Main file path" to: streamlit_app.py (not nested paths)
 """
 import os
 import sys
+import importlib.util
 
-# Get the absolute path of this file's directory
+# Get base directory
 base_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Strategy 1: Try nested development structure
-nested_path = os.path.join(base_dir, "zeravaneAI3_1_fixed3 (1)", "zeravane_fixed", "zeravaneai")
-if os.path.isdir(nested_path):
-    os.chdir(nested_path)
-    sys.path.insert(0, os.getcwd())
-    exec(open(os.path.join(nested_path, "frontend", "app.py")).read())
+# Try nested development structure first
+nested_app_path = os.path.join(base_dir, "zeravaneAI3_1_fixed3 (1)", "zeravane_fixed", "zeravaneai", "frontend", "app.py")
+
+# Try flat production structure second
+flat_app_path = os.path.join(base_dir, "zeravaneai", "frontend", "app.py")
+
+# Determine which path exists
+if os.path.isfile(nested_app_path):
+    app_path = nested_app_path
+    os.chdir(os.path.dirname(os.path.dirname(app_path)))  # Navigate to zeravaneai directory
+elif os.path.isfile(flat_app_path):
+    app_path = flat_app_path
+    os.chdir(os.path.dirname(os.path.dirname(app_path)))  # Navigate to zeravaneai directory
 else:
-    # Strategy 2: Try flat production structure
-    flat_path = os.path.join(base_dir, "zeravaneai")
-    if os.path.isdir(flat_path):
-        os.chdir(flat_path)
-        sys.path.insert(0, os.getcwd())
-        exec(open(os.path.join(flat_path, "frontend", "app.py")).read())
-    else:
-        # Strategy 3: Direct import (if zeravaneai package is available)
-        sys.path.insert(0, base_dir)
-        import streamlit as st
-        st.error(
-            "❌ Failed to locate ZeravaneAI module. Expected either:\n"
-            f"  - {nested_path}\n"
-            f"  - {flat_path}"
-        )
-        st.stop()
+    import streamlit as st
+    st.error(
+        "❌ **Critical Error**: ZeravaneAI module not found!\n\n"
+        f"Expected either:\n"
+        f"  • `{nested_app_path}`\n"
+        f"  • `{flat_app_path}`\n\n"
+        "Please ensure the repository structure is correct."
+    )
+    st.stop()
+
+# Load and execute the frontend app
+spec = importlib.util.spec_from_file_location("frontend_app", app_path)
+frontend_app = importlib.util.module_from_spec(spec)
+sys.modules["frontend_app"] = frontend_app
+spec.loader.exec_module(frontend_app)
