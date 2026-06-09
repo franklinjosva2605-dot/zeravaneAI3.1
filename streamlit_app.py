@@ -7,6 +7,12 @@ Set "Main file path" to: streamlit_app.py (not nested paths)
 """
 import os
 import sys
+
+# [CRITICAL] Set protobuf implementation BEFORE any imports
+# chromadb's opentelemetry integration breaks with protobuf 7.x in Python 3.14
+# unless we use the pure-Python implementation
+os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
+
 import importlib.util
 
 # Get base directory
