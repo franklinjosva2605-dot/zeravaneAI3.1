@@ -1,6 +1,6 @@
 """
 ZeravaneAI — Core Engine v3.1
-─────────────────────────────────────────────────────────────────────────────
+─────────────────────────────────────────────────────────────────
 Fixes over v3.0:
   • [FIX] Crawl4AI WebCrawler instantiated once in __init__, not per-call
           (eliminates 2-5s Playwright browser launch overhead on every scrape)
@@ -12,6 +12,8 @@ Fixes over v3.0:
           so nested files under src/, lib/, packages/ are visible
   • [FIX] Exponential backoff + retry on 429 rate-limit errors for all cloud
           LLM tiers (Gemini, Groq, AI/ML API)
+  • [FIX] Groq and AI/ML API now use consistent memory exclusion logic
+          (exclude_last_n=1) matching Gemini's behavior
   • [NOTE] FastAPI /query memory isolation: use use_memory=False per client
           or add a session_id field if you need per-user memory in production
 """
@@ -48,10 +50,10 @@ except ImportError:
     GEMINI_AVAILABLE = False
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 # FALLBACK IN-MEMORY VECTOR STORE
 # (used only when chromadb is not installed)
-# ═══════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 
 class _Collection:
     """Lightweight in-memory vector store using word-overlap similarity."""
@@ -120,9 +122,9 @@ class _InMemoryClient:
         self._collections.pop(name, None)
 
 
-# ═══════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 # ZERAVANE ENGINE
-# ═══════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════════════════════
 
 class ZeravaneEngine:
     """
@@ -149,13 +151,14 @@ class ZeravaneEngine:
         • Dead import (embedding_functions) removed
         • GitHub tree now fully recursive
         • Exponential backoff on 429 rate-limit errors
+        • Groq and AI/ML API now use consistent memory exclusion
     """
 
     SCRAPER_API_BASE = "https://api.scraperapi.com"
     MIN_TEXT_LENGTH  = 100
     DB_PATH          = os.path.join(os.path.dirname(__file__), "..", "data", "zeravane_db")
 
-    # ── Init ────────────────────────────────────────────────────────────────
+    # ── Init ───────────────────────────────────────────────────────────────
 
     def __init__(self):
         # API keys
@@ -300,9 +303,9 @@ class ZeravaneEngine:
                     break
         return None, last_err
 
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
     # SCRAPING — 3-Tier
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
 
     def _scrape_crawl4ai(self, url: str) -> str:
         """
@@ -397,9 +400,9 @@ class ZeravaneEngine:
         result = self._scrape_requests(url)
         return result, "⚪ Standard Requests (Plain HTML)"
 
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
     # RAG HELPERS
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
 
     def chunk_text(self, text: str, max_chars: int = 3000, overlap: int = 400) -> list:
         """Split text into overlapping chunks."""
@@ -454,9 +457,9 @@ class ZeravaneEngine:
             print(f"[ZeravaneEngine] Vector query error: {e}")
             return ""
 
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
     # CONVERSATION MEMORY
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
 
     def add_to_memory(self, role: str, content: str):
         """Append a turn to conversation memory, trimming to max_memory_turns."""
@@ -487,9 +490,9 @@ class ZeravaneEngine:
         """Reset conversation history."""
         self.conversation_memory = []
 
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
     # 4-TIER LLM INFERENCE
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
 
     def _infer(self, system_instruction: str, prompt: str, use_memory: bool = False) -> tuple:
         """
@@ -543,8 +546,15 @@ class ZeravaneEngine:
             def _call_groq():
                 groq_messages = [{"role": "system", "content": system_instruction}]
                 if use_memory:
-                    # exclude the last message (current user turn already in prompt)
-                    groq_messages.extend(self.conversation_memory[:-1])
+                    # [FIX] Use get_memory_context with exclude_last_n=1 for consistency
+                    mem = self.get_memory_context(exclude_last_n=1)
+                    if mem:
+                        # Parse memory context back into messages
+                        for line in mem.split("\n"):
+                            if line.startswith("User: "):
+                                groq_messages.append({"role": "user", "content": line[6:]})
+                            elif line.startswith("Assistant: "):
+                                groq_messages.append({"role": "assistant", "content": line[11:]})
                 groq_messages.append({"role": "user", "content": prompt})
                 resp = requests.post(
                     "https://api.groq.com/openai/v1/chat/completions",
@@ -578,7 +588,15 @@ class ZeravaneEngine:
             def _call_aiml():
                 aiml_messages = [{"role": "system", "content": system_instruction}]
                 if use_memory:
-                    aiml_messages.extend(self.conversation_memory[:-1])
+                    # [FIX] Use get_memory_context with exclude_last_n=1 for consistency
+                    mem = self.get_memory_context(exclude_last_n=1)
+                    if mem:
+                        # Parse memory context back into messages
+                        for line in mem.split("\n"):
+                            if line.startswith("User: "):
+                                aiml_messages.append({"role": "user", "content": line[6:]})
+                            elif line.startswith("Assistant: "):
+                                aiml_messages.append({"role": "assistant", "content": line[11:]})
                 aiml_messages.append({"role": "user", "content": prompt})
                 resp = requests.post(
                     "https://api.aimlapi.com/v1/chat/completions",
@@ -637,9 +655,9 @@ class ZeravaneEngine:
 
         return f"❌ All LLM tiers failed. Last error: {last_error}", "❌ All Failed"
 
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
     # CAPABILITY 1 — MULTI-URL SCRAPING
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
 
     def scrape_multiple_urls(self, urls: list) -> tuple:
         """
@@ -672,9 +690,9 @@ class ZeravaneEngine:
 
         return merged_chunks, "\n".join(summary)
 
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
     # CAPABILITY 2 — GITHUB REPO ANALYZER
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
 
     def analyze_github_repo(self, github_url: str) -> tuple:
         """
@@ -757,9 +775,9 @@ class ZeravaneEngine:
         except Exception as e:
             return f"GitHub_Error: {e}", {}
 
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
     # CAPABILITY 3 — TECH STACK DETECTION
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
 
     def detect_tech_stack(self, scraped_content: str, target_url: str = "") -> str:
         if not scraped_content or len(scraped_content) < 50:
@@ -787,9 +805,9 @@ class ZeravaneEngine:
         result, _ = self._infer(system_instruction, prompt)
         return result
 
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
     # CAPABILITY 4 — CODE GENERATION FROM DOCS
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
 
     def generate_code_from_docs(self, docs_url: str, generation_request: str, language: str = "Python") -> tuple:
         """
@@ -829,9 +847,9 @@ class ZeravaneEngine:
         code, model_used = self._infer(system_instruction, prompt)
         return code, scrape_method, model_used
 
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
     # MAIN RAG PIPELINE
-    # ══════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════
 
     def execute_live_agent_query(
         self,
